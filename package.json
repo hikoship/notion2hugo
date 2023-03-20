@@ -1,0 +1,19 @@
+{
+  "name": "notion2hugo",
+  "version": "1.0.0",
+  "description": "Convert Notion database entries to Hugo articles",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hikoship/notion2hugo.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/hikoship/notion2hugo/issues"
+  },
+  "homepage": "https://github.com/hikoship/notion2hugo#readme"
+}
