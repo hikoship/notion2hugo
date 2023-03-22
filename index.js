@@ -55,7 +55,8 @@ function addHeader(file_name, properties) {
 }
 
 function addContent(file_name, blocks) {
-  for (let i = 0; i < blocks.length; i++) {
+  // for (let i = 0; i < blocks.length; i++) {
+  for (let i = 3; i>=0; i=-1) {
     try {
     console.log(blocks[i])
     console.log(blocks[i][blocks[i].type])
@@ -70,6 +71,9 @@ function addContent(file_name, blocks) {
 function parseBlock(block) {
   if (block.type.startsWith("heading")) {
     return getHeading(block)
+  }
+  if (block.type == "paragraph") {
+    return getParagraph(block.paragraph)
   }
   return ""
 }
@@ -98,7 +102,37 @@ function getHeading(block) {
   const headingSize = parseInt(type[type.length - 1])
 console.log(headingSize)
   return "#".repeat(headingSize) + " " + block[type].rich_text[0].plain_text + '\n'
+}
 
+function getParagraph(paragraph) {
+  return paragraph.rich_text.map(r => {
+    let s = r.plain_text
+    if (r.href != null) {
+      s = "[" + s + "](" + r.href + ")"
+    }
+    if (r.annotations.bold) {
+      s = "**" + s + "**"
+    }
+    if (r.annotations.italic) {
+      s = "*" + s + "*"
+    }
+    if (r.annotations.code) {
+      s = "`" + s + "`"
+    }
+    if (r.annotations.underline) {
+      s = "<ins>" + s + "</ins>"
+    }
+    if (r.annotations.strikethrough) {
+      s = "<del>" + s + "</del>"
+    }
+    return s;
+  }).join("") + "\n\n"
+    /*
+  for (let i = 0; i < paragraph.rich_text.length; i++) {
+    console.log(paragraph.rich_text[i].annotations)
+  }
+  return ''
+  */
 }
 
 function appendErrorCallback(error) {
