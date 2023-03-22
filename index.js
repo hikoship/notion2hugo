@@ -55,8 +55,8 @@ function addHeader(file_name, properties) {
 }
 
 function addContent(file_name, blocks) {
-  // for (let i = 0; i < blocks.length; i++) {
-  for (let i = 3; i>=0; i=-1) {
+  for (let i = 0; i < blocks.length; i++) {
+  // for (let i = 4; i>=0; i=-1) {
     try {
     console.log(blocks[i])
     console.log(blocks[i][blocks[i].type])
@@ -74,6 +74,9 @@ function parseBlock(block) {
   }
   if (block.type == "paragraph") {
     return getParagraph(block.paragraph)
+  }
+  if (block.type == "image") {
+    return getImage(block.image)
   }
   return ""
 }
@@ -101,7 +104,7 @@ function getHeading(block) {
   const type = block.type
   const headingSize = parseInt(type[type.length - 1])
 console.log(headingSize)
-  return "#".repeat(headingSize) + " " + block[type].rich_text[0].plain_text + '\n'
+  return "#".repeat(headingSize) + " " + block[type].rich_text[0].plain_text + '\n\n'
 }
 
 function getParagraph(paragraph) {
@@ -133,6 +136,10 @@ function getParagraph(paragraph) {
   }
   return ''
   */
+}
+
+function getImage(image) {
+  return "![IMAGE](" + image.external.url + ")\n\n"
 }
 
 function appendErrorCallback(error) {
