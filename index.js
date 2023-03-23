@@ -17,20 +17,22 @@ async function fetch() {
   const notion = new Client({ auth: process.env.NOTION_KEY })
   const database = await notion.databases.query({
     database_id: databaseId,
-      //   filter: {
-      //     // property: "Landmark",
-      //     // rich_text: {
-      //     //   contains: "Bridge",
-      //     // },
+      filter: {
+        property: "Published",
+        checkbox: {
+          equals: true
+        }
+      },
   })
-    // for (let i = 0; i < database.results.length; i++) {
-  for (let i = 0; i < 1; i++) {
+  for (let i = 0; i < database.results.length; i++) {
+ // for (let i = 0; i < 1; i++) {
     try {
       const page = database.results[i]
       const blocks = await notion.blocks.children.list({
         block_id: page.id
       })
-      createMd(page, blocks)
+      console.log(page.properties.Name.title[0].plain_text)
+      // createMd(page, blocks)
     } catch (error) {
       console.error(error)
       continue
