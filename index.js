@@ -1,3 +1,4 @@
+console.log(new Date().toLocaleString());
 console.log('Starting the workflow')
 
 const path = require('path');
