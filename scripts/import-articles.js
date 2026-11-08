@@ -256,41 +256,6 @@ function buildNotionProperties(meta, slug, isDraft, dbSchema) {
     };
   }
 
-  // Extra metadata (Collection, ItemName, Author, Translator, Link, Rate, Tags)
-  if (meta.collection && dbSchema['Collection']) {
-    props['Collection'] = { select: { name: String(meta.collection).trim() } };
-  }
-  if (meta.name && dbSchema['ItemName']) {
-    props['ItemName'] = { rich_text: [{ type: 'text', text: { content: String(meta.name).trim() } }] };
-  }
-  if (meta.author && dbSchema['Author']) {
-    props['Author'] = { rich_text: [{ type: 'text', text: { content: String(meta.author).trim() } }] };
-  }
-  if (meta.translator && dbSchema['Translator']) {
-    props['Translator'] = { rich_text: [{ type: 'text', text: { content: String(meta.translator).trim() } }] };
-  }
-  if (meta.link && dbSchema['Link']) {
-    props['Link'] = { url: String(meta.link).trim() };
-  }
-  if (meta.rate !== undefined && meta.rate !== '' && dbSchema['Rate']) {
-    const num = Number(meta.rate);
-    if (!Number.isNaN(num)) props['Rate'] = { number: num };
-  }
-  const rawTags = meta.tags || meta.tag;
-  if (rawTags && dbSchema['Tags']) {
-    const tagList = Array.isArray(rawTags)
-      ? rawTags
-      : String(rawTags)
-          .split(/[,\s]+/)
-          .map((t) => t.trim())
-          .filter(Boolean);
-    if (dbSchema['Tags'].type === 'multi_select') {
-      props['Tags'] = { multi_select: tagList.map((name) => ({ name })) };
-    } else if (dbSchema['Tags'].type === 'rich_text') {
-      props['Tags'] = { rich_text: [{ type: 'text', text: { content: String(rawTags).trim() } }] };
-    }
-  }
-
   return props;
 }
 
