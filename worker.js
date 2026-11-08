@@ -104,15 +104,14 @@ export class NotionHugoWorker {
     const frontmatterYaml = renderYamlFrontmatter(props);
     const fullDocument = frontmatterYaml + bodyMarkdown;
 
-    // 5. Write to local Hugo content directory
-    await fs.promises.mkdir(this.config.hugoContentDir, { recursive: true });
-    const destFile = path.join(this.config.hugoContentDir, `${slug}.md`);
-    console.log(`[Worker] Writing generated markdown to: ${destFile}`);
-    await fs.promises.writeFile(destFile, fullDocument, 'utf8');
-
-    // 6. Sequential Git Operations
+    // 5. Pull latest git changes before writing to disk so git rebase never fails on unstaged edits
     try {
       await this.git.pullLatest();
+
+      await fs.promises.mkdir(this.config.hugoContentDir, { recursive: true });
+      const destFile = path.join(this.config.hugoContentDir, `${slug}.md`);
+      console.log(`[Worker] Writing generated markdown to: ${destFile}`);
+      await fs.promises.writeFile(destFile, fullDocument, 'utf8');
 
       // If the page's Filename (slug) was renamed since last sync, remove the old file
       const prevSlug = this.syncState[page.id]?.slug;

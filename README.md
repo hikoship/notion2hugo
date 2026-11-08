@@ -78,7 +78,9 @@ notion2hugo/
 │   ├── verify-roundtrip.js  # Diff check between original and exported posts
 │   └── setup-pm2.sh         # PM2 initialization script
 └── tests/                   # Test suite
-    └── converter.test.js    # Unit tests for parser and frontmatter
+    ├── converter.test.js    # Unit tests for block parser, frontmatter & Notion query filters
+    ├── worker.e2e.test.js   # Sandboxed full-lifecycle E2E test (local /tmp bare git repo)
+    └── live-notion.e2e.js   # Live Notion API + sandboxed /tmp git E2E smoke test
 ```
 
 ---
@@ -152,9 +154,47 @@ node worker.js --page-id <PAGE_ID>  # Export & publish a single Notion page imme
 
 ---
 
-## 6. Testing
+## 6. Testing & Agent Verification Guide
 
-Run the automated test suite:
-```bash
-npm test
-```
+This repository provides three test tiers. None of the test suites modify `~/GitHub/blog` or push to your production GitHub remote.
+
+### 6.1 Test Commands
+
+- **Run all offline tests (Unit + Sandboxed E2E):**
+  ```bash
+  npm test
+  ```
+- **Tier 1 — Unit Tests (`tests/converter.test.js`):**
+  Tests `BlockParser` (headings, lists, code, quotes, callouts, tables, equations, `![IMAGE](url)` without captions, YouTube `video` $\leftrightarrow$ `<iframe>`), `extractProperties` / `renderYamlFrontmatter` (manual `Date` preservation and stripping `WIP`/`Archived`/`Created`/`Last edited time`), and `NotionService.queryRecentlyChangedPages` filter payloads.
+  ```bash
+  npm run test:unit
+  ```
+- **Tier 2 — Sandboxed Lifecycle E2E Tests (`tests/worker.e2e.test.js`):**
+  Spins up an isolated `/tmp` bare git remote and local clone (automatically deleted after the test) and runs `NotionHugoWorker.pollOnce()` + `GitManager` through the complete 6-step state machine:
+  1. Initial publish (`Published = true, WIP = false`) $\rightarrow$ file created, committed, and pushed.
+  2. Idempotent poll (unchanged `last_edited_time`) $\rightarrow$ `0` articles processed.
+  3. Edit while `WIP = true` $\rightarrow$ ignored; remote file remains at v1.
+  4. Uncheck `WIP` (`WIP = false`, newer `last_edited_time`) $\rightarrow$ v2 exported and pushed.
+  5. Rename `Filename` slug $\rightarrow$ old `.md` file removed (`git rm`), new `.md` file committed and pushed.
+  6. Unpublish (`Published = false, WIP = false`) $\rightarrow$ `.md` file removed from git (`unpublish(post): ...`), pushed, and deleted from `.sync_state.json`.
+  ```bash
+  npm run test:e2e
+  ```
+- **Tier 3 — Live Notion API + Sandboxed Git Smoke Test (`tests/live-notion.e2e.js`):**
+  Uses real Notion credentials from `.env` while routing all git/file operations to an isolated `/tmp` git repository. Creates a temporary Notion page (`e2e-live-smoke-<timestamp>`), verifies `WIP = true` exclusion, `WIP = false, Published = true` export, and `Published = false` unpublish against the live Notion API, then archives the temporary Notion page and deletes the `/tmp` directory in a `finally` block.
+  ```bash
+  npm run test:live
+  ```
+
+---
+
+### 6.2 Agent Testing Instructions (Mandatory for Coding Agents)
+
+When making changes to this repository, you **MUST** run the appropriate test tier(s) before considering your task complete or committing changes:
+
+| Scope of Code Change | Required Test Command(s) | What to Verify |
+| :--- | :--- | :--- |
+| **Markdown / Block Conversion & Frontmatter** (`lib/blocks-to-md.js`, `lib/frontmatter.js`, `scripts/import-articles.js`) | `npm run test:unit` | All block formatting, heading level shifts (`Heading 1` $\leftrightarrow$ `##`), YouTube `video` $\leftrightarrow$ `<iframe>`, image syntax (`![IMAGE](url)`), and YAML frontmatter property filtering pass. Add new unit test cases in `tests/converter.test.js` for any newly added block or property behavior. |
+| **Worker State Machine, Git Automation & Sync State** (`worker.js`, `lib/git.js`, `lib/config.js`, `scripts/export-all.js`) | `npm test` (runs both `test:unit` and `test:e2e`) | Full lifecycle transitions (`Publish` $\rightarrow$ `Idempotent` $\rightarrow$ `WIP` $\rightarrow$ `Uncheck WIP` $\rightarrow$ `Slug Rename` $\rightarrow$ `Unpublish`) and real `git add` / `git rm` / `git commit` / `git push` verification pass in the `/tmp` sandbox. |
+| **Notion API Queries, Filters, Schema & SDK Calls** (`lib/notion.js` or Notion database property changes) | `npm test && npm run test:live` | Both offline filter assertions and the live Notion API round-trip (`pages.create` $\rightarrow$ `databases.query` with server-side `last_edited_time` + `WIP=false` filter $\rightarrow$ `blocks.children.list` $\rightarrow$ `pages.update` archive cleanup) succeed against the real Notion database. |
+| **Production Daemon Changes** (`worker.js`, `ecosystem.config.cjs`, `.env`) | `npm test` + `pm2 restart notion-hugo-pipeline --update-env` + `pm2 logs notion-hugo-pipeline --lines 20 --nostream` | Tests pass and the live PM2 worker restarts cleanly with zero errors in `notion-hugo-pipeline-error-0.log`. |

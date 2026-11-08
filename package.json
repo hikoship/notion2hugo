@@ -11,7 +11,10 @@
     "import:articles": "node scripts/import-articles.js",
     "export:all": "node scripts/export-all.js",
     "verify:roundtrip": "node scripts/verify-roundtrip.js",
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js",
+    "test:unit": "node --test tests/converter.test.js",
+    "test:e2e": "node --test tests/worker.e2e.test.js",
+    "test:live": "node tests/live-notion.e2e.js"
   },
   "repository": {
     "type": "git",
