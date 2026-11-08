@@ -199,6 +199,7 @@ export class NotionHugoWorker {
       return 0;
     }
 
+    this.syncState = this._loadSyncState();
     const pollStartTimeIso = new Date().toISOString();
     // Subtract a 2-minute window from _lastCheckTime to account for Notion's 1-minute last_edited_time resolution
     const cutoffIso = this.syncState._lastCheckTime

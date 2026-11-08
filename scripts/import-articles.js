@@ -63,8 +63,8 @@ function cleanMarkdownForMartian(markdownText, imageBaseUrl) {
   let text = markdownText;
 
   // Convert Hugo highlight shortcodes {{< highlight lang >}} ... {{< / highlight >}} to ```lang
-  text = text.replace(/\{\{<\s*highlight\s+([a-zA-Z0-9_-]+)[^>]*>\}\}/gi, '```$1\n');
-  text = text.replace(/\{\{<\s*\/\s*highlight\s*>\}\}/gi, '\n```');
+  text = text.replace(/\{\{<\s*highlight\s+([a-zA-Z0-9_-]+)[^>]*>\}\}\r?\n?/gi, '```$1\n');
+  text = text.replace(/\r?\n?\{\{<\s*\/\s*highlight\s*>\}\}/gi, '\n```');
 
   // Convert raw HTML <img src="..." alt="..."> to ![alt](url)
   text = text.replace(/<img\s+[^>]*src=["']([^"']+)["'][^>]*alt=["']([^"']*)["'][^>]*>/gi, '![$2]($1)');
@@ -91,23 +91,24 @@ function cleanMarkdownForMartian(markdownText, imageBaseUrl) {
   // Prefix relative internal links [text](/post/...) with https://blog.hgao.net so Notion API accepts them
   text = text.replace(/(?<!!)\[([^\]]+)\]\(\/([^)]*)\)/g, '[$1](https://blog.hgao.net/$2)');
 
-  // Shift headings up by 1 level (## -> #, ### -> ##, #### -> ###) outside code fences
-  // so Markdown H2 maps to Notion Heading 1 (which exports back to Markdown H2)
+  // Shift headings up by 1 level (## -> #, ### -> ##, #### -> ###) and convert --- dividers outside code fences
   const lines = text.split('\n');
   let inCodeFence = false;
   const hasH1 = lines.some((l) => /^#\s+/.test(l));
-  if (!hasH1) {
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].trim().startsWith('```')) {
-        inCodeFence = !inCodeFence;
-        continue;
-      }
-      if (!inCodeFence && /^#{2,4}\s+/.test(lines[i])) {
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim().startsWith('```')) {
+      inCodeFence = !inCodeFence;
+      continue;
+    }
+    if (!inCodeFence) {
+      if (!hasH1 && /^#{2,4}\s+/.test(lines[i])) {
         lines[i] = lines[i].slice(1);
+      } else if (/^---+\s*$/.test(lines[i])) {
+        lines[i] = 'NOTIONDIVIDERBLOCKTOKEN';
       }
     }
-    text = lines.join('\n');
   }
+  text = lines.join('\n');
 
   return text;
 }
@@ -116,7 +117,7 @@ function sanitizeRichTextLinks(richText) {
   if (!Array.isArray(richText)) return;
   for (const item of richText) {
     const url = item?.text?.link?.url;
-    if (url && !/^https?:\/\//i.test(url) && !/^mailto:/i.test(url)) {
+    if (url && !/^https?:\/\//i.test(url)) {
       if (url.startsWith('/')) {
         item.text.link.url = `https://blog.hgao.net${url}`;
       } else {
@@ -126,17 +127,58 @@ function sanitizeRichTextLinks(richText) {
   }
 }
 
-function postProcessBlocks(blocks) {
+function extractImageCaptions(markdownText) {
+  const captions = new Map();
+  const regex = /!\[([^\]]*)\]\(([^)]+)\)/g;
+  let match;
+  while ((match = regex.exec(markdownText)) !== null) {
+    const alt = match[1].trim();
+    const url = match[2].trim();
+    if (alt && alt !== 'IMAGE') {
+      captions.set(url, alt);
+    }
+  }
+  return captions;
+}
+
+function postProcessBlocks(blocks, imageCaptions = null) {
   return blocks.map((block) => {
     const data = block[block.type];
     if (data?.rich_text) {
       sanitizeRichTextLinks(data.rich_text);
     }
     if (data?.children) {
-      data.children = postProcessBlocks(data.children);
+      data.children = postProcessBlocks(data.children, imageCaptions);
+    }
+    if (block.type === 'image' && block.image) {
+      const imgUrl = block.image.external?.url || block.image.file?.url || '';
+      const captionText = imageCaptions?.get(imgUrl);
+      if (captionText && (!block.image.caption || block.image.caption.length === 0)) {
+        block.image.caption = [{ type: 'text', text: { content: captionText } }];
+      }
+    }
+    if (block.type === 'quote' && block.quote) {
+      const rtPlain = (block.quote.rich_text || []).map((t) => t.text?.content || t.plain_text || '').join('');
+      if (!rtPlain && Array.isArray(block.quote.children) && block.quote.children.length > 0) {
+        const firstChild = block.quote.children[0];
+        if (firstChild.type === 'paragraph' && firstChild.paragraph?.rich_text) {
+          block.quote.rich_text = firstChild.paragraph.rich_text;
+          block.quote.children = block.quote.children.slice(1);
+          if (block.quote.children.length === 0) {
+            delete block.quote.children;
+          }
+        }
+      }
     }
     if (block.type === 'paragraph') {
       const plain = (block.paragraph?.rich_text || []).map((t) => t.text?.content || t.plain_text || '').join('').trim();
+      if (plain === 'NOTIONDIVIDERBLOCKTOKEN') {
+        return {
+          object: 'block',
+          type: 'divider',
+          divider: {},
+        };
+      }
       const match = plain.match(/^YOUTUBEVIDEOBLOCKTOKEN:([a-zA-Z0-9_-]+)$/);
       if (match) {
         return {
@@ -214,6 +256,41 @@ function buildNotionProperties(meta, slug, isDraft, dbSchema) {
     };
   }
 
+  // Extra metadata (Collection, ItemName, Author, Translator, Link, Rate, Tags)
+  if (meta.collection && dbSchema['Collection']) {
+    props['Collection'] = { select: { name: String(meta.collection).trim() } };
+  }
+  if (meta.name && dbSchema['ItemName']) {
+    props['ItemName'] = { rich_text: [{ type: 'text', text: { content: String(meta.name).trim() } }] };
+  }
+  if (meta.author && dbSchema['Author']) {
+    props['Author'] = { rich_text: [{ type: 'text', text: { content: String(meta.author).trim() } }] };
+  }
+  if (meta.translator && dbSchema['Translator']) {
+    props['Translator'] = { rich_text: [{ type: 'text', text: { content: String(meta.translator).trim() } }] };
+  }
+  if (meta.link && dbSchema['Link']) {
+    props['Link'] = { url: String(meta.link).trim() };
+  }
+  if (meta.rate !== undefined && meta.rate !== '' && dbSchema['Rate']) {
+    const num = Number(meta.rate);
+    if (!Number.isNaN(num)) props['Rate'] = { number: num };
+  }
+  const rawTags = meta.tags || meta.tag;
+  if (rawTags && dbSchema['Tags']) {
+    const tagList = Array.isArray(rawTags)
+      ? rawTags
+      : String(rawTags)
+          .split(/[,\s]+/)
+          .map((t) => t.trim())
+          .filter(Boolean);
+    if (dbSchema['Tags'].type === 'multi_select') {
+      props['Tags'] = { multi_select: tagList.map((name) => ({ name })) };
+    } else if (dbSchema['Tags'].type === 'rich_text') {
+      props['Tags'] = { rich_text: [{ type: 'text', text: { content: String(rawTags).trim() } }] };
+    }
+  }
+
   return props;
 }
 
@@ -223,6 +300,11 @@ async function main() {
   const overwrite = args.includes('--overwrite');
   const limitIdx = args.indexOf('--limit');
   const limit = limitIdx !== -1 ? parseInt(args[limitIdx + 1], 10) : null;
+  const slugIdx = args.indexOf('--slug');
+  const slugFilter =
+    slugIdx !== -1 && args[slugIdx + 1]
+      ? new Set(args[slugIdx + 1].split(',').map((s) => s.trim()).filter(Boolean))
+      : null;
 
   const config = loadConfig();
   if (!config.notionApiKey || !config.notionDatabaseId) {
@@ -287,7 +369,10 @@ async function main() {
   let importedCount = 0;
   let skippedCount = 0;
 
-  const toProcess = limit ? items.slice(0, limit) : items;
+  const filteredItems = slugFilter
+    ? items.filter(({ file }) => slugFilter.has(path.basename(file, '.md')))
+    : items;
+  const toProcess = limit ? filteredItems.slice(0, limit) : filteredItems;
 
   for (let idx = 0; idx < toProcess.length; idx++) {
     const { file, isDraft } = toProcess[idx];
@@ -298,8 +383,9 @@ async function main() {
     const content = fs.readFileSync(file, 'utf8');
 
     const { meta, body } = parseFrontmatterAndBody(content);
+    const effectiveDraft = isDraft || meta.draft === true || String(meta.draft).toLowerCase() === 'true';
     const title = meta.title || slug;
-    const statusName = isDraft ? 'Draft' : 'Published';
+    const statusName = effectiveDraft ? 'Draft' : 'Published';
 
     // Check if already in Notion
     if (existingSlugs.has(slug) && !overwrite) {
@@ -309,8 +395,9 @@ async function main() {
     }
 
     const cleanedBody = cleanMarkdownForMartian(body, imageBaseUrl);
-    const blocks = postProcessBlocks(markdownToBlocks(cleanedBody));
-    const properties = buildNotionProperties(meta, slug, isDraft, dbSchema);
+    const imageCaptions = extractImageCaptions(cleanedBody);
+    const blocks = postProcessBlocks(markdownToBlocks(cleanedBody), imageCaptions);
+    const properties = buildNotionProperties(meta, slug, effectiveDraft, dbSchema);
 
     console.log(`[${idx + 1}/${toProcess.length}] [IMPORTING] '${title}' (slug: ${slug})`);
     console.log(`       Status: ${statusName} | Blocks: ${blocks.length} | Date: ${meta.date || 'none'}`);
@@ -324,7 +411,8 @@ async function main() {
   const type = block.type;
   const data = block[type] || {};
   if (type === 'image' || type === 'video') {
-    return `${type}:${data.external?.url || data.file?.url || ''}`;
+    const cap = (data.caption || []).map((t) => t.text?.content ?? t.plain_text ?? '').join('');
+    return `${type}:${data.external?.url || data.file?.url || ''}:${cap}`;
   }
   if (type === 'divider') {
     return 'divider';
@@ -378,9 +466,10 @@ async function updatePageInPlace(notion, pageId, properties, newBlocks) {
     const newB = newBlocks[i];
     if (blockSignature(oldB) !== blockSignature(newB)) {
       const type = newB.type;
+      const { type: _innerType, ...updatePayload } = newB[type] || {};
       await notion.client.blocks.update({
         block_id: oldB.id,
-        [type]: newB[type],
+        [type]: updatePayload,
       });
       updatedBlocks++;
       await new Promise((res) => setTimeout(res, 150));

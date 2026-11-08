@@ -92,21 +92,32 @@ test('BlockParser nested lists and checklists without extra blank lines', async 
   assert.ok(md.includes('- [x] Done task\n- [ ] Pending task'));
 });
 
-test('BlockParser images ignore Notion captions and output ![IMAGE](url)', async () => {
+test('BlockParser images preserve Notion captions as alt text and default to IMAGE when empty', async () => {
   const parser = new BlockParser({ postSlug: '2006-world-cup-memory' });
   const blocks = [
     {
       type: 'image',
       image: {
         type: 'external',
+        external: { url: 'https://ik.imagekit.io/hikoship/blog/2006-world-cup-memory/wc2006-logo.jpg' },
+        caption: [{ plain_text: '二〇〇六世界杯会徽' }],
+      },
+    },
+    {
+      type: 'image',
+      image: {
+        type: 'external',
         external: { url: 'https://ik.imagekit.io/hikoship/blog/2006-world-cup-memory/wc2006-cards.jpg' },
-        caption: [{ plain_text: 'Should be ignored' }],
+        caption: [],
       },
     },
   ];
 
   const md = await parser.parseBlocks(blocks);
-  assert.equal(md.trim(), '![IMAGE](https://ik.imagekit.io/hikoship/blog/2006-world-cup-memory/wc2006-cards.jpg)');
+  assert.equal(
+    md.trim(),
+    '![二〇〇六世界杯会徽](https://ik.imagekit.io/hikoship/blog/2006-world-cup-memory/wc2006-logo.jpg)\n\n![IMAGE](https://ik.imagekit.io/hikoship/blog/2006-world-cup-memory/wc2006-cards.jpg)'
+  );
 });
 
 test('BlockParser converts YouTube video blocks to responsive iframe and falls back for other URLs', async () => {
@@ -147,6 +158,16 @@ test('BlockParser quotes, callouts, tables, dividers, and equations', async () =
     {
       type: 'quote',
       quote: { rich_text: [{ plain_text: 'Line 1\nLine 2' }] },
+      children: [
+        {
+          type: 'paragraph',
+          paragraph: { rich_text: [{ plain_text: 'Child quote para 1' }] },
+        },
+        {
+          type: 'paragraph',
+          paragraph: { rich_text: [{ plain_text: 'Child quote para 2' }] },
+        },
+      ],
     },
     {
       type: 'callout',
@@ -184,7 +205,7 @@ test('BlockParser quotes, callouts, tables, dividers, and equations', async () =
   ];
 
   const md = await parser.parseBlocks(blocks);
-  assert.ok(md.includes('> Line 1\n> Line 2'));
+  assert.ok(md.includes('> Line 1\n> Line 2\n>\n> Child quote para 1\n>\n> Child quote para 2'));
   assert.ok(md.includes('> 💡 Note text'));
   assert.ok(md.includes('---'));
   assert.ok(md.includes('$$\n\\int_0^1 x^2 dx\n$$'));
@@ -222,7 +243,9 @@ test('frontmatter extraction preserves manual Date and strips WIP/Archived/Creat
   const yamlOutput = renderYamlFrontmatter(props);
   assert.ok(yamlOutput.startsWith('---\n'));
   assert.ok(yamlOutput.endsWith('---\n\n'));
-  assert.match(yamlOutput, /title: My Great Post/);
+  assert.match(yamlOutput, /title: "My Great Post"/);
+  assert.match(yamlOutput, /categories: "Life"/);
+  assert.doesNotMatch(yamlOutput, /^slug:/m);
   assert.doesNotMatch(yamlOutput, /wip:/i);
   assert.doesNotMatch(yamlOutput, /archived:/i);
 });
