@@ -1,23 +1,31 @@
 {
   "name": "notion2hugo",
-  "version": "1.0.0",
-  "description": "Convert Notion database entries to Hugo articles",
-  "main": "index.js",
+  "version": "2.0.0",
+  "description": "Convert Notion database entries to Hugo articles with automated deployment",
+  "main": "worker.js",
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node worker.js",
+    "inventory:images": "node scripts/inventory-images.js",
+    "migrate:images": "node scripts/migrate-images.js",
+    "import:articles": "node scripts/import-articles.js",
+    "export:all": "node scripts/export-all.js",
+    "verify:roundtrip": "node scripts/verify-roundtrip.js",
+    "test": "node --test tests/*.test.js"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/hikoship/notion2hugo.git"
   },
-  "author": "",
+  "author": "HiKo",
   "license": "ISC",
-  "bugs": {
-    "url": "https://github.com/hikoship/notion2hugo/issues"
-  },
-  "homepage": "https://github.com/hikoship/notion2hugo#readme",
   "dependencies": {
-    "@notionhq/client": "^1.0.1",
-    "dotenv": "^16.0.3"
+    "@aws-sdk/client-s3": "^3.758.0",
+    "@imagekit/nodejs": "^7.14.0",
+    "@notionhq/client": "^2.2.15",
+    "@tryfabric/martian": "^1.2.4",
+    "dotenv": "^16.4.7",
+    "mime-types": "^2.1.35",
+    "yaml": "^2.7.0"
   }
 }
