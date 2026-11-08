@@ -74,6 +74,12 @@ export class NotionHugoWorker {
     const props = extractProperties(page);
     const slug = props.slug;
     const title = props.title || 'Untitled';
+    const isWip = Boolean(page.properties?.WIP?.checkbox);
+
+    if (isWip) {
+      console.log(`[Worker] Page '${title}' (${slug}) is marked WIP. Ignoring.`);
+      return false;
+    }
 
     if (!slug) {
       console.error(`[Worker] Page ${pageId} has no valid slug/filename. Aborting.`);
@@ -87,7 +93,7 @@ export class NotionHugoWorker {
     const blocks = await this.notion.getAllBlocks(pageId, true);
     console.log(`[Worker] Retrieved ${blocks.length} top-level blocks.`);
 
-    // 3. Convert blocks to Markdown + rehost images to Cloudflare R2
+    // 3. Convert blocks to Markdown
     const parser = new BlockParser({
       imageStore: this.imageStore,
       postSlug: slug,
@@ -107,6 +113,16 @@ export class NotionHugoWorker {
     // 6. Sequential Git Operations
     try {
       await this.git.pullLatest();
+
+      // If the page's Filename (slug) was renamed since last sync, remove the old file
+      const prevSlug = this.syncState[page.id]?.slug;
+      if (prevSlug && prevSlug !== slug) {
+        const oldFile = path.join(this.config.hugoContentDir, `${prevSlug}.md`);
+        if (fs.existsSync(oldFile)) {
+          await this.git.removeFile(oldFile, `chore(post): remove renamed post ${prevSlug} -> ${slug}`);
+        }
+      }
+
       const commitMsg = `publish(post): ${slug} - '${title}'`;
       const committed = await this.git.commitFile(destFile, commitMsg);
 
@@ -138,43 +154,162 @@ export class NotionHugoWorker {
     return true;
   }
 
+  async unpublishPage(pageId, slug, title = slug) {
+    const destFile = path.join(this.config.hugoContentDir, `${slug}.md`);
+    if (!fs.existsSync(destFile)) {
+      if (this.syncState[pageId]) {
+        delete this.syncState[pageId];
+        this._saveSyncState();
+      }
+      return false;
+    }
+
+    console.log(`\n============================================================`);
+    console.log(`[Worker] Unpublishing non-public post from GitHub: '${title}' (${slug}.md)`);
+    console.log(`============================================================`);
+
+    try {
+      await this.git.pullLatest();
+      const commitMsg = `unpublish(post): ${slug} - '${title}'`;
+      const removed = await this.git.removeFile(destFile, commitMsg);
+
+      if (removed) {
+        await this.git.push();
+        const verified = await this.git.verifyPush();
+        if (!verified) {
+          console.error(`[Worker] Git push verification failed when unpublishing '${slug}'!`);
+          return false;
+        }
+      }
+    } catch (gitErr) {
+      console.error(`[Worker] Git removal failed for '${slug}': ${gitErr.message}`);
+      return false;
+    }
+
+    if (this.syncState[pageId]) {
+      delete this.syncState[pageId];
+      this._saveSyncState();
+    }
+    console.log(`[Worker] Successfully removed unpublished post: ${slug}\n`);
+    return true;
+  }
+
   async pollOnce() {
     if (isProcessing) {
       console.warn(`[Worker] Processing lock active. Skipping poll iteration.`);
       return 0;
     }
 
-    const allCandidates = await this.notion.queryPublishCandidates(this.config.notionDatabaseId);
-    if (!allCandidates || allCandidates.length === 0) {
+    const pollStartTimeIso = new Date().toISOString();
+    // Subtract a 2-minute window from _lastCheckTime to account for Notion's 1-minute last_edited_time resolution
+    const cutoffIso = this.syncState._lastCheckTime
+      ? new Date(Date.parse(this.syncState._lastCheckTime) - 2 * 60 * 1000).toISOString()
+      : null;
+
+    const changedPages = await this.notion.queryRecentlyChangedPages(
+      this.config.notionDatabaseId,
+      cutoffIso
+    );
+    if (!changedPages) {
       return 0;
     }
 
-    // Filter to pages with Status='Publish' OR whose last_edited_time changed since last sync
-    const candidates = allCandidates.filter((page) => {
-      if (page.properties?.Status?.status?.name === 'Publish') return true;
-      const prev = this.syncState[page.id];
-      return !prev || prev.lastEditedTime !== page.last_edited_time;
-    });
+    const toPublish = [];
+    const toUnpublish = [];
 
-    if (candidates.length === 0) {
+    for (const page of changedPages) {
+      const isWip = Boolean(page.properties?.WIP?.checkbox);
+
+      // 1. If an article is WIP, ignore it completely
+      if (isWip) {
+        continue;
+      }
+
+      const props = extractProperties(page);
+      const slug = props.slug;
+      const title = props.title || slug;
+      if (!slug) continue;
+
+      const isPublic =
+        Boolean(page.properties?.Published?.checkbox) ||
+        ['Publish', 'Published'].includes(page.properties?.Status?.status?.name);
+
+      const destFile = path.join(this.config.hugoContentDir, `${slug}.md`);
+
+      if (isPublic) {
+        // 2. Public, non-WIP post: export only if recently changed or file missing on disk
+        const prev = this.syncState[page.id];
+        const isRecentlyChanged =
+          !prev ||
+          prev.lastEditedTime !== page.last_edited_time ||
+          prev.slug !== slug ||
+          !fs.existsSync(destFile);
+
+        if (isRecentlyChanged) {
+          toPublish.push(page);
+        }
+      } else {
+        // 3. Not public & not WIP: remove from GitHub if it currently exists in content/post/
+        if (fs.existsSync(destFile)) {
+          toUnpublish.push({ pageId: page.id, slug, title });
+        } else if (this.syncState[page.id]) {
+          const oldSlug = this.syncState[page.id].slug;
+          const oldFile = path.join(this.config.hugoContentDir, `${oldSlug}.md`);
+          if (fs.existsSync(oldFile)) {
+            toUnpublish.push({ pageId: page.id, slug: oldSlug, title });
+          } else {
+            delete this.syncState[page.id];
+            this._saveSyncState();
+          }
+        }
+      }
+    }
+
+    if (toPublish.length === 0 && toUnpublish.length === 0) {
+      this.syncState._lastCheckTime = pollStartTimeIso;
+      this._saveSyncState();
       return 0;
     }
 
-    console.log(`[Worker] Found ${candidates.length} modified/new article(s) ready to publish.`);
     let processedCount = 0;
+    let failedCount = 0;
 
-    for (const page of candidates) {
+    for (const item of toUnpublish) {
       if (shouldTerminate) break;
+      isProcessing = true;
+      try {
+        const removed = await this.unpublishPage(item.pageId, item.slug, item.title);
+        if (removed) processedCount++;
+      } catch (err) {
+        failedCount++;
+        console.error(`[Worker] Error unpublishing ${item.slug}: ${err.message}`);
+      } finally {
+        isProcessing = false;
+      }
+    }
 
+    if (toPublish.length > 0) {
+      console.log(`[Worker] Found ${toPublish.length} public, non-WIP, recently changed article(s) to export.`);
+    }
+
+    for (const page of toPublish) {
+      if (shouldTerminate) break;
       isProcessing = true;
       try {
         const success = await this.processPage(page.id);
         if (success) processedCount++;
+        else failedCount++;
       } catch (err) {
+        failedCount++;
         console.error(`[Worker] Unexpected error processing page ${page.id}: ${err.message}`);
       } finally {
         isProcessing = false;
       }
+    }
+
+    if (failedCount === 0 && !shouldTerminate) {
+      this.syncState._lastCheckTime = pollStartTimeIso;
+      this._saveSyncState();
     }
 
     return processedCount;

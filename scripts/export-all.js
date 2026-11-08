@@ -44,8 +44,23 @@ async function main() {
 
   console.log(`Found ${results.length} pages in Notion. Exporting to ${outDir}...`);
 
+  const includeDrafts = args.includes('--include-drafts');
+
   for (let idx = 0; idx < results.length; idx++) {
     const page = results[idx];
+    const isWip = Boolean(page.properties?.WIP?.checkbox);
+    if (isWip) {
+      console.log(`[${idx + 1}/${results.length}] Skipping WIP page: ${page.id}`);
+      continue;
+    }
+
+    const isPublic =
+      Boolean(page.properties?.Published?.checkbox) ||
+      ['Publish', 'Published'].includes(page.properties?.Status?.status?.name);
+    if (!isPublic && !includeDrafts) {
+      continue;
+    }
+
     const props = extractProperties(page);
     const slug = props.slug;
     const title = props.title || 'Untitled';

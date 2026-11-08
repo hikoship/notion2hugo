@@ -2,7 +2,7 @@
 
 A zero-inbound-port publishing worker daemon managed natively by PM2.
 
-Directly polls your Notion `Blog` database every 30 seconds for published articles (`Published = true`) whose `last_edited_time` has changed, converts Notion block trees to Hugo-compatible Markdown + YAML frontmatter, writes files directly into your local Hugo repository (`~/GitHub/blog/content/post`), and commits & pushes to GitHub (`hikoship/blog`) to trigger GitHub Actions deployment to `https://blog.hgao.net`.
+Directly polls your Notion `Blog` database every 5 minutes (`300s`) using a server-side `last_edited_time` + `WIP = false` filter, converts Notion block trees to Hugo-compatible Markdown + YAML frontmatter, writes files directly into your local Hugo repository (`~/GitHub/blog/content/post`), and commits & pushes to GitHub (`hikoship/blog`) to trigger GitHub Actions deployment to `https://blog.hgao.net`.
 
 ---
 
@@ -16,7 +16,7 @@ Directly polls your Notion `Blog` database every 30 seconds for published articl
                     +--------------+--------------+
                                    |
                           Outbound HTTPS Poll
-                     (Every 30s, tracks last_edited_time)
+                     (Every 5m, filters last_edited_time)
                                    |
                     +--------------v--------------+
                     |          worker.js          |
@@ -42,8 +42,11 @@ Directly polls your Notion `Blog` database every 30 seconds for published articl
 ```
 
 ### Key Design Principles & Conventions:
-- **Zero Inbound Ports & Zero Pipedream:** The daemon runs entirely as an outbound client polling Notion directly every 30s.
-- **Smart Change Detection (`.sync_state.json`):** Each poll makes a single lightweight `databases.query` call and compares each published page's `last_edited_time` against `.sync_state.json`. It only fetches blocks and exports when a page is newly published or edited in Notion.
+- **Zero Inbound Ports & Zero Pipedream:** The daemon runs entirely as an outbound client polling Notion directly every 5 minutes (`300s`).
+- **Sync Rules (`Published`, `WIP`, and `last_edited_time`):**
+  1. **`WIP = true` (Work in Progress):** Ignored completely by the worker—neither exported nor removed while `WIP` is checked.
+  2. **`Published = true` & `WIP = false` (Public, non-WIP):** Exported to `~/GitHub/blog/content/post/<slug>.md` and pushed to GitHub only when newly published or recently edited (`page.last_edited_time` differs from `.sync_state.json`, or file is missing on disk).
+  3. **`Published = false` & `WIP = false` (Unpublished):** If `~/GitHub/blog/content/post/<slug>.md` already exists in the blog repository, the worker automatically removes the file (`git rm`), commits, and pushes to unpublish it from GitHub.
 - **Manual Date Control:** Publication dates (`Date`) are manually set by the author in Notion. The daemon preserves your dates and **never** overwrites them.
 - **Image Hosting (ImageKit.io):** Blog post images are hosted on ImageKit (`https://ik.imagekit.io/hikoship/blog/<post-slug>/<filename>`) or Flickr and embedded in Notion as external image links (`/image` -> Embed link).
 - **Heading & Media Conventions:**
