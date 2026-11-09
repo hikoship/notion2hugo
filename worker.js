@@ -199,6 +199,14 @@ export class NotionHugoWorker {
       return 0;
     }
 
+    const isClean = await this.git.isWorkingTreeClean();
+    if (!isClean) {
+      console.warn(
+        `[Worker] Blog repository (${this.config.gitRepoDir}) has uncommitted changes. Skipping poll iteration.`
+      );
+      return 0;
+    }
+
     this.syncState = this._loadSyncState();
     const pollStartTimeIso = new Date().toISOString();
     // Subtract a 2-minute window from _lastCheckTime to account for Notion's 1-minute last_edited_time resolution
@@ -371,6 +379,13 @@ Options:
 
   try {
     if (targetPageId) {
+      const isClean = await worker.git.isWorkingTreeClean();
+      if (!isClean) {
+        console.error(
+          `[Worker] Blog repository (${config.gitRepoDir}) has uncommitted changes. Aborting.`
+        );
+        process.exit(1);
+      }
       console.log(`[Worker] Processing single page via CLI: ${targetPageId}`);
       const success = await worker.processPage(targetPageId);
       process.exit(success ? 0 : 1);

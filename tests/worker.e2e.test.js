@@ -121,6 +121,21 @@ test('Sandboxed E2E: Publish -> Idempotent Poll -> WIP Ignore -> Uncheck WIP -> 
   const count2 = await worker.pollOnce();
   assert.equal(count2, 0, 'Unchanged page should not be re-exported');
 
+  // --- Step 2.5: Dirty blog repo check (uncommitted changes skip Notion query) ---
+  let notionQueriedWhileDirty = false;
+  const origQuery = worker.notion.queryRecentlyChangedPages;
+  worker.notion.queryRecentlyChangedPages = async (...args) => {
+    notionQueriedWhileDirty = true;
+    return origQuery(...args);
+  };
+  const dirtyFile = path.join(env.repoDir, 'uncommitted-file.txt');
+  fs.writeFileSync(dirtyFile, 'dirty working tree', 'utf8');
+  const countDirty = await worker.pollOnce();
+  assert.equal(countDirty, 0, 'Poll must return 0 when blog repo has uncommitted changes');
+  assert.equal(notionQueriedWhileDirty, false, 'Notion must not be queried when blog repo is dirty');
+  fs.unlinkSync(dirtyFile);
+  worker.notion.queryRecentlyChangedPages = origQuery;
+
   // --- Step 3: Edit while WIP=true (should be ignored) ---
   currentPage = makeNotionPage({
     published: true,
